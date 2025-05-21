@@ -1,68 +1,27 @@
-name: Build and push Docker Image
+name: Deploy PostgreSQL to EC2
 
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Login to GHCR
-        run: echo "${{ secrets.GH_TOKEN }}" | docker login ghcr.io -u ${{ secrets.GH_USERNAME }} --password-stdin
-
-      - name: Build and push image
-        run: |
-          docker build -t ghcr.io/${{ secrets.GH_USERNAME }}/fastapi-app:latest .
-          docker push ghcr.io/${{ secrets.GH_USERNAME }}/fastapi-app:latest
-          
-  deploy-to-ec2:
-    needs: build
+  deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: SSH into EC2 and deploy containers
-        uses: appleboy/ssh-action@v0.1.10
-        with:
-          host: ${{ secrets.EC2_IP }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.AWS_ACCESS_KEY }}
-          script: |
-            # Instalar Docker si no está disponible
-            if ! command -v docker &> /dev/null
-            then
-              echo "Docker no está instalado. Instalando..."
-              curl -fsSL https://get.docker.com | sudo sh
-              sudo usermod -aG docker $USER
-            fi
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
-            # Login to GitHub Container Registry
-            echo "${{ secrets.GH_TOKEN }}" | docker login ghcr.io -u ${{ secrets.GH_USERNAME }} --password-stdin
+    - name: Install SSH key
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/ec2_key.pem
+        chmod 600 ~/.ssh/ec2_key.pem
+        cat ~/.ssh/ec2_key.pem
 
-            # PostgreSQL: detener y eliminar si ya existe
-            docker stop postgresql-dev || true
-            docker rm postgresql-dev || true
-
-            # Iniciar PostgreSQL
-            docker run -d \
-              --name postgresql-dev \
-              -e POSTGRES_USER=${{ secrets.POSTGRES_USER }} \
-              -e POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }} \
-              -e POSTGRES_DB=${{ secrets.POSTGRES_DB }} \
-              -p 5432:5432 \
-              postgres:15
-
-            # FastAPI: detener y eliminar si ya existe
-            docker stop fastapi-app || true
-            docker rm fastapi-app || true
-
-            # Descargar y ejecutar la nueva imagen
-            docker pull ghcr.io/${{ secrets.GH_USERNAME }}/fastapi-app:latest
-            docker run -d -p 8000:8000 --name fastapi-app ghcr.io/${{ secrets.GH_USERNAME }}/fastapi-app:latest
+    - name: Deploy PostgreSQL container
+      run: |
+        ssh -i ~/.ssh/ec2_key.pem -o StrictHostKeyChecking=no ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
+          "docker run --name postgresql-dev -e POSTGRES_USER=${{ secrets.POSTGRES_USER }} \
+           -e POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }} \
+           -e POSTGRES_DB=${{ secrets.POSTGRES_DB }} \
+           -p 5432:5432 -d postgres:15"
