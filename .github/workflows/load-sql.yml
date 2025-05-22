@@ -9,35 +9,40 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v3 # Clona el repo en el runner
+      uses: actions/checkout@v3
 
     - name: Configurar SSH
       uses: shimataro/ssh-key-action@v2
       with:
-        key: ${{ secrets.EC2_SSH_KEY }} # Clave privada desde Secrets
-        known_hosts: "fake" # Ignora verificación de host (para pruebas)
+        key: ${{ secrets.EC2_SSH_KEY }}
+        known_hosts: "fake"
 
     - name: Copiar SQL a EC2
       run: |
-        # Copia los archivos .sql a la instancia EC2
-        scp -o StrictHostKeyChecking=no -r ./sql ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/home/${{ secrets.EC2_USER }}/
+        scp -o StrictHostKeyChecking=no -r ./sql \
+          ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/home/${{ secrets.EC2_USER }}/
 
     - name: Ejecutar SQL en PostgreSQL
       run: |
         ssh -o StrictHostKeyChecking=no ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'EOF'
-        # Copia cada archivo SQL al contenedor y ejecútalo
-        for sql_file in /home/$USER/sql/*.sql; do
-          filename=$(basename "$sql_file")
-          echo "Copiando $filename al contenedor..."
-          docker cp "$sql_file" postgresql-dev:/tmp/"$filename"
-          echo "Ejecutando $filename..."
-          docker exec postgresql-dev psql \
-            -U $POSTGRES_USER \
-            -d $POSTGRES_DB \
-            -f /tmp/"$filename"
-        done
-        echo "¡Datos cargados exitosamente!"
+          set -e # Detener si algún comando falla
+
+          export POSTGRES_USER="${{ secrets.POSTGRES_USER }}"
+          export POSTGRES_DB="${{ secrets.POSTGRES_DB }}"
+
+          SQL_DIR="/home/$(whoami)/sql"
+
+          for sql_file in "$SQL_DIR"/*.sql; do
+            filename=$(basename "$sql_file")
+            echo "📦 Copiando $filename al contenedor..."
+            docker cp "$sql_file" postgresql-dev:/tmp/"$filename"
+
+            echo "🧠 Ejecutando $filename..."
+            docker exec -i postgresql-dev psql \
+              -U "$POSTGRES_USER" \
+              -d "$POSTGRES_DB" \
+              -f /tmp/"$filename"
+          done
+
+          echo "✅ ¡Todos los scripts SQL se ejecutaron correctamente!"
         EOF
-      env:
-        POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
-        POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
