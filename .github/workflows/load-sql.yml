@@ -1,11 +1,7 @@
-name: Load SQL data to PostgreSQL
+name: Load Data into PostgreSQL
 
 on:
-  workflow_dispatch:
-  push:
-    branches: [ main ]
-    paths: 
-      - 'sql/*.sql'
+  workflow_dispatch: # Permite ejecución manual
 
 jobs:
   load-data:
@@ -13,25 +9,35 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v3 # Clona el repo en el runner
 
-    - name: Install SSH key
-      run: |
-        mkdir -p ~/.ssh
-        echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/ec2_key.pem
-        chmod 600 ~/.ssh/ec2_key.pem
+    - name: Configurar SSH
+      uses: shimataro/ssh-key-action@v2
+      with:
+        key: ${{ secrets.EC2_SSH_KEY }} # Clave privada desde Secrets
+        known_hosts: "fake" # Ignora verificación de host (para pruebas)
 
-    - name: Copy SQL files to EC2
+    - name: Copiar SQL a EC2
       run: |
-        scp -i ~/.ssh/ec2_key.pem -o StrictHostKeyChecking=no sql/*.sql \
-          ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/tmp/
+        # Copia los archivos .sql a la instancia EC2
+        scp -o StrictHostKeyChecking=no -r ./sql ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/home/${{ secrets.EC2_USER }}/
 
-    - name: Execute SQL files in PostgreSQL container
+    - name: Ejecutar SQL en PostgreSQL
       run: |
-        ssh -i ~/.ssh/ec2_key.pem -o StrictHostKeyChecking=no ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
-          "docker cp /tmp/init.sql postgresql-dev:/tmp/init.sql && \
-           docker cp /tmp/data.sql postgresql-dev:/tmp/data.sql && \
-           docker exec postgresql-dev psql -U ${{ secrets.POSTGRES_USER }} \
-           -d ${{ secrets.POSTGRES_DB }} -f /tmp/init.sql && \
-           docker exec postgresql-dev psql -U ${{ secrets.POSTGRES_USER }} \
-           -d ${{ secrets.POSTGRES_DB }} -f /tmp/data.sql"
+        ssh -o StrictHostKeyChecking=no ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'EOF'
+        # Copia cada archivo SQL al contenedor y ejecútalo
+        for sql_file in /home/$USER/sql/*.sql; do
+          filename=$(basename "$sql_file")
+          echo "Copiando $filename al contenedor..."
+          docker cp "$sql_file" postgresql-dev:/tmp/"$filename"
+          echo "Ejecutando $filename..."
+          docker exec postgresql-dev psql \
+            -U $POSTGRES_USER \
+            -d $POSTGRES_DB \
+            -f /tmp/"$filename"
+        done
+        echo "¡Datos cargados exitosamente!"
+        EOF
+      env:
+        POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+        POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
