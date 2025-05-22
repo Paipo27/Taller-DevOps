@@ -9,7 +9,7 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v3  # ✅ Clona el repo primero
+      uses: actions/checkout@v3
 
     - name: Configurar SSH
       uses: shimataro/ssh-key-action@v2
@@ -19,25 +19,20 @@ jobs:
 
     - name: Copiar SQL a EC2
       run: |
-        # 🔄 Usa la ruta correcta según tu estructura
-        scp -o StrictHostKeyChecking=no -r ./sql_scripts \
-          ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/home/${{ secrets.EC2_USER }}/
+        scp -o StrictHostKeyChecking=no -r ./sql_scripts ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/home/${{ secrets.EC2_USER }}/
 
     - name: Ejecutar SQL en PostgreSQL
       run: |
-        ssh -o StrictHostKeyChecking=no ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'EOF'
-        for sql_file in /home/$USER/sql_scripts/*.sql; do
-          filename=$(basename "$sql_file")
-          echo "Copiando $filename al contenedor..."
-          docker cp "$sql_file" postgresql-dev:/tmp/"$filename"
-          echo "Ejecutando $filename..."
-          docker exec postgresql-dev psql \
-            -U $POSTGRES_USER \
-            -d $POSTGRES_DB \
-            -f /tmp/"$filename"
+        ssh -o StrictHostKeyChecking=no ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "
+        for sql_file in /home/${{ secrets.EC2_USER }}/sql_scripts/*.sql; do
+          filename=\$(basename \"\$sql_file\")
+          echo \"Copiando \$filename al contenedor...\"
+          docker cp \"\$sql_file\" postgresql-dev:/tmp/\"\$filename\"
+          echo \"Ejecutando \$filename...\"
+          docker exec postgresql-dev psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -f /tmp/\"\$filename\"
         done
-        echo "¡Datos cargados exitosamente!"
-        EOF
+        echo \"¡Datos cargados exitosamente!\"
+        "
       env:
         POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
         POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
